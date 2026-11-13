@@ -18,6 +18,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jarvis_profiles  # noqa: E402
+import sams_jobs  # noqa: E402
 import sams_llm  # noqa: E402
 from sams_common import (SAMS, APPROVALS, ROUTINES, PIDFILE, WORKDIR, CLAUDE, SKILLS_PROMPT,  # noqa: E402
                          TelegramError, tg, send, secret, chat_id, ensure_dirs, log, load_json,
@@ -55,6 +56,8 @@ APPROVAL CARDS: before anything big or irreversible (sending a mail/message, pay
 changing someone else's data) run: ~/Documents/Jarvis/orb/sams-approve "<exactly what will happen, incl. the \
 full text to be sent>" — it asks him on his phone (he answers JA/NEJ) and prints JA, NEJ or TIMEOUT. Only JA counts as his \
 explicit yes. Never ask for approval of trivial or read-only things.
+CODE JOBS: track every coding job you start for him with ~/Documents/Jarvis/orb/sams-cloudjob (add / start / progress <id> <pct> \"what now\" / done); run `sams-cloudjob next` to pick the next job - his queue order decides. He sees it by writing \"code med Sams\".
+
 ROUTINES: he can ask for recurring jobs ("hver morgen kl 7 ..."). Manage them with \
 ~/Documents/Jarvis/orb/sams-routine add "<cron: min hour dom mon dow>" "<name>" "<full instructions>" | list | \
 remove <id> | run <id>. Times are local Danish time. Confirm the schedule in words.
@@ -427,9 +430,48 @@ def siri_server():
     srv.serve_forever()
 
 
+# ---------- "Code med Sams": kodejobs + prioriteret kø (sams_jobs) ----------
+CODE_RE = re.compile(r"^\W*(/code(@\w+)?|code\s+med\s+sams|kode\s+med\s+sams)\W*$", re.I)
+MOVE_RE = re.compile(r"^\s*(?:job\s+)?(\d+)\s+(op|ned|øverst|top)\s*$", re.I)   # "2 op", "job 3 øverst"
+
+
+def send_code_view():
+    kb = sams_jobs.view_keyboard() if transport() == "telegram" else None
+    send(sams_jobs.view_text(), reply_markup=kb)
+
+
+def handle_code_text(text):
+    """True hvis beskeden var kodejob-visning eller 'N op/ned/øverst' (nummer = placering i den viste kø)."""
+    if CODE_RE.match(text):
+        send_code_view(); return True
+    m = MOVE_RE.match(text)
+    act = sams_jobs.active_jobs()
+    if m and 1 <= int(m.group(1)) <= len(act):
+        how = {"op": "up", "ned": "down"}.get(m.group(2).lower(), "top")
+        sams_jobs.move(act[int(m.group(1)) - 1]["id"], how)
+        send_code_view(); return True
+    return False
+
+
+def on_code_callback(cb, jid, action):
+    if action != "noop" and action != "refresh":
+        try:
+            sams_jobs.move(jid, action)
+        except KeyError:
+            pass
+    msg = cb["message"]
+    try:
+        tg("answerCallbackQuery", callback_query_id=cb["id"])
+        tg("editMessageText", chat_id=msg["chat"]["id"], message_id=msg["message_id"],
+           text=sams_jobs.view_text(), reply_markup=sams_jobs.view_keyboard())
+    except TelegramError as e:
+        log("code view update failed", e)   # fx "message is not modified" ved Opdater uden ændring
+
+
 # ---------- incoming updates ----------
 HELP = ("Skriv eller send en talebesked, billede eller fil.\n"
         "/ny  ny samtale\n/status  hvad kører\n/rutiner  dine faste rutiner\n"
+        "/code  kodejobs og kø (eller skriv \"code med Sams\")\n"
         "Skriv \"opus\" eller \"tænk grundigt\" for den stærkeste model.")
 
 
@@ -464,6 +506,8 @@ def on_message(msg):
         send(status_text()); return
     if text == "/rutiner":
         send(routines_text()); return
+    if handle_code_text(text):
+        return
     try:
         if msg.get("voice") or msg.get("audio"):
             f = msg.get("voice") or msg.get("audio")
@@ -514,6 +558,9 @@ def on_callback(cb):
     if not chat_id() or cb.get("message", {}).get("chat", {}).get("id") != chat_id():
         return
     data = cb.get("data") or ""
+    mc = re.fullmatch(r"cj:([0-9a-f]+|-):(up|down|top|noop|refresh)", data)
+    if mc:
+        on_code_callback(cb, *mc.groups()); return
     m = re.fullmatch(r"ap:([0-9a-f]{8,32}):(yes|no)", data)
     if not m:
         return
@@ -757,6 +804,9 @@ def status_text():
     lines = [f"Samtale: {'i gang' if st.get('session') else 'ny'}",
              f"Kø: {work_q.qsize()} besked(er){', arbejder' if busy() else ''}",
              f"Rutiner: {len(load_json(ROUTINES, []))}, kører nu: {len(running_routines)}"]
+    cj = sams_jobs.active_jobs()
+    if cj:
+        lines.append("Kodejobs: " + "; ".join(f"{j['title'][:30]} ({sams_jobs.LABEL[j['status']]}, {j['progress']}%)" for j in cj))
     try:
         tasks = json.loads((WORKDIR / "tasks/status.json").read_text())
         live = [t for t in tasks if t.get("state") in ("running", "queued")]
