@@ -1,0 +1,3 @@
+#!/bin/zsh
+# Phone calls (Twilio) are not set up yet.
+echo "NOT_CONFIGURED"; exit 3

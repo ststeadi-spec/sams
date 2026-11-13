@@ -1,0 +1,44 @@
+#!/Users/samueltang/Documents/Jarvis/orb/venv/bin/python
+"""Approval card: ask Samuel Ja/Nej on his phone (iMessage: he texts JA/NEJ; Telegram: buttons) and wait for the answer.
+
+  sams-approve [--timeout MINUTES] "<exactly what will happen, incl. the text to be sent>"
+Prints JA, NEJ or TIMEOUT (exit 0 / 1 / 2). Only JA counts as his explicit yes.
+Prints NOT_CONFIGURED (exit 3) if Telegram isn't set up or the bridge isn't running.
+"""
+import os, sys, time, secrets
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sams_common import APPROVALS, send, bridge_running, paired, transport, ensure_dirs, TelegramError, log
+
+args = sys.argv[1:]
+minutes = 30.0
+if args[:1] == ["--timeout"]:
+    minutes = float(args[1]); args = args[2:]
+if not args or args[0] in ("-h", "--help"):
+    print(__doc__); sys.exit(2)
+what = " ".join(args)
+ensure_dirs()
+if not paired() or not bridge_running():
+    print("NOT_CONFIGURED"); sys.exit(3)
+aid = secrets.token_hex(6)
+f = APPROVALS / aid
+f.write_text("PENDING"); os.chmod(f, 0o600)
+try:
+    if transport() == "imessage":
+        send(f"🟡 Godkend?\n\n{what}\n\nSvar JA eller NEJ.")
+    else:
+        send(f"🟡 Godkend?\n\n{what}", reply_markup={"inline_keyboard": [[
+            {"text": "✅ Ja", "callback_data": f"ap:{aid}:yes"}, {"text": "❌ Nej", "callback_data": f"ap:{aid}:no"}]]})
+except TelegramError as e:
+    f.unlink(missing_ok=True)
+    print("NOT_CONFIGURED", e); sys.exit(3)
+log("approval asked", aid)
+end = time.time() + minutes * 60
+while time.time() < end:
+    ans = f.read_text().strip()
+    if ans in ("JA", "NEJ"):
+        f.unlink(missing_ok=True)
+        print(ans); sys.exit(0 if ans == "JA" else 1)
+    time.sleep(1)
+f.write_text("EXPIRED")
+print("TIMEOUT"); sys.exit(2)

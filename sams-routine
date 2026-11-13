@@ -1,0 +1,64 @@
+#!/Users/samueltang/Documents/Jarvis/orb/venv/bin/python
+"""Sams' scheduled routines (run by the Telegram bridge, result sent to Samuel on Telegram).
+
+  sams-routine add "<cron: min hour day-of-month month day-of-week>" "<name>" "<full instructions>"
+      e.g. sams-routine add "0 7 * * 1-5" "Morgenbrief" "Kalender i dag + vigtige mails ..."
+      (local time; day-of-week 0/7 = Sunday, 1 = Monday)
+  sams-routine list
+  sams-routine remove <id>
+  sams-routine enable <id> | disable <id>
+  sams-routine run <id>        run it now (within a minute)
+"""
+import sys, secrets
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sams_common import ROUTINES, SAMS, load_json, save_json, ensure_dirs
+from sams_telegram import cron_field  # validation
+
+def valid(expr):
+    f = expr.split()
+    if len(f) != 5:
+        return False
+    try:
+        for spec, (lo, hi) in zip(f, [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]):
+            cron_field(spec, lo, lo, hi)
+            for part in spec.split(","):
+                base = part.split("/")[0]
+                if base != "*":
+                    for x in base.split("-"):
+                        if not lo <= int(x) <= hi:
+                            return False
+        return True
+    except ValueError:
+        return False
+
+ensure_dirs()
+a = sys.argv[1:]
+rs = load_json(ROUTINES, [])
+if not a or a[0] in ("-h", "--help"):
+    print(__doc__); sys.exit(0)
+cmd = a[0]
+if cmd == "add" and len(a) == 4:
+    if not valid(a[1]):
+        print(f"invalid cron expression: {a[1]!r}"); sys.exit(2)
+    rid = secrets.token_hex(3)
+    rs.append({"id": rid, "cron": a[1], "name": a[2], "prompt": a[3], "enabled": True})
+    save_json(ROUTINES, rs); print(f"added {rid}")
+elif cmd == "list":
+    for r in rs:
+        print(f"{r['id']}  {r['cron']:15} {'on ' if r.get('enabled', True) else 'off'}  {r['name']}  (last: {r.get('last_run', 'never')})\n      {r['prompt'][:200]}")
+    if not rs:
+        print("(no routines)")
+elif cmd in ("remove", "enable", "disable", "run") and len(a) == 2:
+    hit = [r for r in rs if r["id"] == a[1]]
+    if not hit:
+        print(f"no routine {a[1]}"); sys.exit(1)
+    if cmd == "remove":
+        rs.remove(hit[0])
+    elif cmd == "run":
+        (SAMS / f"run-{a[1]}.req").write_text("1"); print("queued (runs within a minute)"); sys.exit(0)
+    else:
+        hit[0]["enabled"] = cmd == "enable"
+    save_json(ROUTINES, rs); print("ok")
+else:
+    print(__doc__); sys.exit(2)

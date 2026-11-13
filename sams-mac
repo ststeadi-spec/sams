@@ -1,0 +1,30 @@
+#!/Users/samueltang/Documents/Jarvis/orb/venv/bin/python
+"""Cloud Sams -> Samuel's Mac (over Tailscale) for Mac-only things: Apple Calendar, iMessage/WhatsApp,
+Apple Mail, files on the Mac, DaVinci. The Mac's Sams does the task with its own tools and returns the answer.
+
+  sams-mac "what to do / ask"     -> prints the Mac's answer, or MAC_OFFLINE if the Mac is off/asleep
+"""
+import json, sys
+from pathlib import Path
+import requests
+
+SAMS = Path.home() / ".sams"
+
+
+def main(a):
+    if not a or a[0] in ("-h", "--help"):
+        print(__doc__); return 0
+    ip = (SAMS / "mac_ip").read_text().strip() if (SAMS / "mac_ip").exists() else ""
+    key = (SAMS / "siri_key").read_text().strip()
+    if not ip:
+        print("NOT_CONFIGURED (no ~/.sams/mac_ip)"); return 1
+    try:
+        r = requests.post(f"http://{ip}:8787/ask", timeout=(5, 620), headers={"X-Sams-Key": key},
+                          json={"text": " ".join(a), "quiet": True})
+        print(r.json().get("answer", "")); return 0
+    except requests.RequestException:
+        print("MAC_OFFLINE"); return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

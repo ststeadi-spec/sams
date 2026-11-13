@@ -1,0 +1,71 @@
+#!/Users/samueltang/Documents/Jarvis/orb/venv/bin/python
+"""Sams' memory history (like Azaris' "memory history: undo any change that is wrong").
+
+Sams' lasting memory is ~/Documents/Jarvis/CLAUDE.md (+ memory/*.md notes, not the daily logs).
+Every change is snapshotted in a private git history (~/.sams/memory.git), so wrong edits can be undone.
+
+  sams-memory snapshot ["message"]   save the current state if anything changed (the bridge does this
+                                     after every phone turn and every routine)
+  sams-memory history [N]            last N changes (default 10) with what changed
+  sams-memory show <id>              the full diff of one change
+  sams-memory undo <id>              undo that one change (makes a new change, nothing is lost)
+"""
+import subprocess, sys
+from pathlib import Path
+
+HOME = Path.home()
+WORK = HOME / "Documents/Jarvis"
+GITDIR = HOME / ".sams/memory.git"
+PATHS = ["CLAUDE.md", "memory", "skills"]
+EXCLUDE = ":(exclude)memory/daily"
+
+
+def git(*a, check=True):
+    r = subprocess.run(["git", f"--git-dir={GITDIR}", f"--work-tree={WORK}", *a],
+                       capture_output=True, text=True, cwd=WORK)
+    if check and r.returncode != 0:
+        raise SystemExit(r.stderr.strip() or r.stdout.strip())
+    return r.stdout
+
+
+def init():
+    if not GITDIR.exists():
+        subprocess.run(["git", "init", "--bare", "-q", str(GITDIR)], check=True)
+        git("config", "user.name", "Sams"); git("config", "user.email", "sams@localhost")
+        git("config", "commit.gpgsign", "false")
+
+
+def snapshot(msg="auto"):
+    init()
+    git("add", "-A", "--", *PATHS, EXCLUDE)
+    if not git("status", "--porcelain", "--", *PATHS, EXCLUDE).strip() and git("rev-parse", "-q", "--verify", "HEAD", check=False).strip():
+        return "unchanged"
+    if not git("diff", "--cached", "--name-only").strip() and git("rev-parse", "-q", "--verify", "HEAD", check=False).strip():
+        return "unchanged"
+    git("commit", "-q", "-m", msg)
+    return git("rev-parse", "--short", "HEAD").strip()
+
+
+def main(a):
+    if not a or a[0] in ("-h", "--help"):
+        print(__doc__); return 0
+    init()
+    cmd = a[0]
+    if cmd == "snapshot":
+        print(snapshot(" ".join(a[1:]) or "auto"))
+    elif cmd == "history":
+        n = a[1] if len(a) > 1 else "10"
+        print(git("log", f"-{n}", "--date=format:%d.%m %H:%M", "--format=%h  %ad  %s", "--stat=100", check=False) or "(no history yet)")
+    elif cmd == "show" and len(a) == 2:
+        print(git("show", "--format=%h %ad %s", "--date=format:%d.%m %H:%M", a[1]))
+    elif cmd == "undo" and len(a) == 2:
+        snapshot("before undo")
+        git("revert", "--no-edit", a[1])
+        print("undone:", a[1], "->", git("rev-parse", "--short", "HEAD").strip())
+    else:
+        print(__doc__); return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
