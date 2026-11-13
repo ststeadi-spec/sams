@@ -6,3 +6,7 @@
 ## Selvforbedring 13.11.2026 (cloud)
 - Billede uden tekst 12.11 kl. 21:42 blev besvaret af Haiku, som ikke genkendte en Steadicam-rig og spurgte "hvad skal jeg bruge det til". `pick_model` sender nu beskeder der starter med `[Samuel sendte` (billeder/filer) til mindst Sonnet, og billeder uden tekst får en hint om at tolke det ud fra hans arbejde/udstyr og gætte kvalificeret før der spørges.
 - Backup: `backups/orb-bak-archive/sams_telegram.py.<stamp>`. Ingen tests på cloud; verificeret med py_compile + pick_model-kald. Træder i kraft ved næste genstart af broen (ikke genstartet: en `claude -p` kørte).
+
+## Code med Sams (13.11.2026)
+- `sams_jobs.py` + `sams-cloudjob`: kodejobs i `~/.sams/cloudjobs.json` (titel, projekt, status, fremdrift, "hvad nu"). Listens rækkefølge er køen; `sams-cloudjob next` giver øverste job med status queued.
+- Telegram: skriv "code med Sams" eller /code → liste med ⬆️⬇️🔝-knapper pr. job (iMessage: skriv fx "2 op", "3 øverst"). /status viser også kodejobs.

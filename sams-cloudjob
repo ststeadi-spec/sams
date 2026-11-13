@@ -1,0 +1,64 @@
+#!/Users/samueltang/Documents/Jarvis/orb/venv/bin/python
+"""Kodejobs og kø ("Code med Sams"). Rækkefølgen i køen styrer hvad der laves først.
+
+  sams-cloudjob add "<titel>" [--project P] [--current "hvad nu"] [--top]
+  sams-cloudjob list
+  sams-cloudjob next                      id på det næste job i køen (status queued), ellers tom
+  sams-cloudjob start <id> ["hvad nu"]    sæt til 'arbejder'
+  sams-cloudjob progress <id> <0-100> ["hvad nu"]
+  sams-cloudjob block <id> ["hvad der mangler"] | done <id> | fail <id> ["hvorfor"]
+  sams-cloudjob up|down|top <id>          ryk i køen
+  sams-cloudjob remove <id>
+Arbejdere: kald `next` før I tager et nyt job, og opdater progress/current undervejs.
+"""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sams_jobs as J
+
+a = sys.argv[1:]
+if not a or a[0] in ("-h", "--help"):
+    print(__doc__); sys.exit(0)
+cmd, rest = a[0], a[1:]
+
+
+def opt(name, args):
+    if name in args:
+        i = args.index(name)
+        v = args[i + 1] if i + 1 < len(args) else ""
+        del args[i:i + 2]
+        return v
+    return None
+
+
+try:
+    if cmd == "add":
+        project, current = opt("--project", rest), opt("--current", rest)
+        top = "--top" in rest
+        rest = [x for x in rest if x != "--top"]
+        if not rest:
+            print(__doc__); sys.exit(2)
+        print(J.add(" ".join(rest), project or "", current or "", top)["id"])
+    elif cmd == "list":
+        print(J.view_text())
+    elif cmd == "next":
+        j = J.next_job()
+        print(j["id"] if j else "")
+    elif cmd == "start" and rest:
+        J.update(rest[0], status="running", current=rest[1] if len(rest) > 1 else None)
+    elif cmd == "progress" and len(rest) >= 2:
+        J.update(rest[0], progress=int(rest[1]), current=rest[2] if len(rest) > 2 else None)
+    elif cmd in ("block", "fail") and rest:
+        J.update(rest[0], status="blocked" if cmd == "block" else "failed", current=rest[1] if len(rest) > 1 else None)
+    elif cmd == "done" and rest:
+        J.update(rest[0], status="done", current="")
+    elif cmd in ("up", "down", "top") and rest:
+        J.move(rest[0], cmd)
+    elif cmd == "remove" and rest:
+        J.remove(rest[0])
+    else:
+        print(__doc__); sys.exit(2)
+except KeyError as e:
+    print(f"intet (entydigt) job med id {e}"); sys.exit(1)
+except ValueError as e:
+    print(e); sys.exit(2)
